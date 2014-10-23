@@ -43,12 +43,15 @@ typedef struct {
 
 bool it_quit(arg_t);
 bool it_switch_mode(arg_t);
+bool it_switch_dual_mode(arg_t);
+bool it_switch_manga_mode(arg_t);
 bool it_toggle_fullscreen(arg_t);
 bool it_toggle_bar(arg_t);
 bool t_reload_all(arg_t);
 bool it_reload_image(arg_t);
 bool it_remove_image(arg_t);
 bool i_navigate(arg_t);
+bool i_navigate_archive(arg_t);
 bool i_alternate(arg_t);
 bool it_first(arg_t);
 bool it_n_or_last(arg_t);
@@ -59,6 +62,7 @@ bool it_navigate_marked(arg_t);
 bool it_scroll_move(arg_t);
 bool it_scroll_screen(arg_t);
 bool i_scroll_to_edge(arg_t);
+bool i_scroll_to_edge_seq(arg_t);
 bool i_drag(arg_t);
 bool i_zoom(arg_t);
 bool i_set_zoom(arg_t);

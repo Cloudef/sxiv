@@ -6,9 +6,9 @@ MANPREFIX = $(PREFIX)/share/man
 CC      = gcc
 CFLAGS  = -std=c99 -Wall -pedantic -O2 -I$(PREFIX)/include -DHAVE_GIFLIB
 LDFLAGS = -L$(PREFIX)/lib
-LIBS    = -lX11 -lImlib2 -lgif
+LIBS    = -lX11 -lImlib2 -lgif -larchive
 
-SRC = commands.c exif.c image.c main.c options.c thumbs.c util.c window.c
+SRC = commands.c exif.c image.c main.c options.c thumbs.c util.c window.c archive.c
 OBJ = $(SRC:.c=.o)
 
 all: sxiv

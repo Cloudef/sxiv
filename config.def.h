@@ -73,6 +73,8 @@ static const keymap_t keys[] = {
 	/* ctrl   key               function              argument */
 	{ false,  XK_q,             it_quit,              (arg_t) None },
 	{ false,  XK_Return,        it_switch_mode,       (arg_t) None },
+	{ false,  XK_d,             it_switch_dual_mode,  (arg_t) None },
+	{ true,   XK_m,             it_switch_manga_mode, (arg_t) None },
 	{ false,  XK_f,             it_toggle_fullscreen, (arg_t) None },
 	{ false,  XK_b,             it_toggle_bar,        (arg_t) None },
 
@@ -86,6 +88,8 @@ static const keymap_t keys[] = {
 	{ false,  XK_BackSpace,     i_navigate,           (arg_t) -1 },
 	{ false,  XK_bracketright,  i_navigate,           (arg_t) +10 },
 	{ false,  XK_bracketleft,   i_navigate,           (arg_t) -10 },
+	{ false,  XK_Home,			i_navigate_archive,   (arg_t) -1 },
+	{ false,  XK_End,			i_navigate_archive,   (arg_t) +1 },
 	{ true,   XK_6,             i_alternate,          (arg_t) None },
 	{ false,  XK_g,             it_first,             (arg_t) None },
 	{ false,  XK_G,             it_n_or_last,         (arg_t) None },
@@ -120,6 +124,8 @@ static const keymap_t keys[] = {
 	{ false,  XK_J,             i_scroll_to_edge,     (arg_t) DIR_DOWN },
 	{ false,  XK_K,             i_scroll_to_edge,     (arg_t) DIR_UP },
 	{ false,  XK_L,             i_scroll_to_edge,     (arg_t) DIR_RIGHT },
+
+	{ false,  XK_M,             i_scroll_to_edge_seq, (arg_t) None },
 
 	{ false,  XK_plus,          i_zoom,               (arg_t) +1 },
 	{ false,  XK_KP_Add,        i_zoom,               (arg_t) +1 },

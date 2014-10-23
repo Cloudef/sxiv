@@ -65,6 +65,9 @@ void* s_malloc(size_t);
 void* s_realloc(void*, size_t);
 char* s_strdup(char*);
 
+int s_strcmp(const char *s1, const char *s2);
+int s_strucmp(const char *s1, const char *s2);
+
 void warn(const char*, ...);
 void die(const char*, ...);
 
@@ -72,6 +75,7 @@ ssize_t get_line(char**, size_t*, FILE*);
 
 void size_readable(float*, const char**);
 
+char* path_append(const char *base, const char *path);
 char* absolute_path(const char*);
 
 int r_opendir(r_dir_t*, const char*);

@@ -32,9 +32,12 @@ enum { MIN_GIF_DELAY = 25 };
 
 #include "exif.h"
 #include "image.h"
+#include "archive.h"
 #include "options.h"
 #include "util.h"
 #include "config.h"
+
+extern int manga_mode;
 
 float zoom_min;
 float zoom_max;
@@ -291,15 +294,22 @@ bool img_test(const char *filename)
 
 bool img_load(img_t *img, const fileinfo_t *file)
 {
+	int r;
 	const char *fmt;
+	static Imlib_Image (*imlib_load_func)(const char *path) = imlib_load_image;
 
 	if (img == NULL || file == NULL || file->name == NULL || file->path == NULL)
 		return false;
 
-	if (access(file->path, R_OK) < 0 ||
-	    (img->im = imlib_load_image(file->path)) == NULL)
-	{
-		warn("could not open image: %s", file->name);
+    r = access(file->path, R_OK);
+
+	if (r < 0 && file->archive)
+		return archive_img_load(img, file);
+
+	if (file->archive) imlib_load_func = imlib_load_image_immediately;
+	if (r < 0 || (img->im = imlib_load_func(file->path)) == NULL) {
+		if (!archive_is_archive(file->path))
+			warn("could not open image: %s", file->name);
 		return false;
 	}
 
@@ -307,7 +317,8 @@ bool img_load(img_t *img, const fileinfo_t *file)
 	imlib_image_set_changes_on_disk();
 
 	if ((fmt = imlib_image_format()) == NULL) {
-		warn("could not open image: %s", file->name);
+		if (!archive_is_archive(file->path))
+			warn("could not open image: %s", file->name);
 		return false;
 	}
 	if (STREQ(fmt, "jpeg"))
@@ -436,10 +447,11 @@ void img_render(img_t *img)
 	if (!img->re) {
 		/* rendered for the first time */
 		img->re = true;
+		img->edgedir = 1;
 		if (img->zoom * img->w <= win->w)
 			img->x = (win->w - img->w * img->zoom) / 2;
 		else
-			img->x = 0;
+			img->x = manga_mode ? (win->w - img->w * img->zoom) : 0;
 		if (img->zoom * img->h <= win->h)
 			img->y = (win->h - img->h * img->zoom) / 2;
 		else
@@ -773,3 +785,107 @@ bool img_frame_animate(img_t *img, bool restart)
 
 	return true;
 }
+
+bool img_join(img_t *combined, img_t *first, img_t *second, bool reverse)
+{
+	Imlib_Image *tmp = NULL, *old, *cim, *fim, *sim;
+	unsigned int fw = 0, fh = 0, tw = 0, th = 0, w, h, w2, h2;
+
+	if (combined == NULL || first == NULL || second == NULL)
+		return false;
+
+    if (first->multi.cnt > 0 || second->multi.cnt > 0)
+		return false;
+
+	old = imlib_context_get_image();
+
+	if (reverse) {
+		fim = second->im;
+		w = second->w;
+		h = second->h;
+		sim = first->im;
+		w2 = first->w;
+		h2 = first->h;
+	} else {
+		fim = first->im;
+		w = first->w;
+		h = first->h;
+		sim = second->im;
+		w2 = second->w;
+		h2 = second->h;
+	}
+
+	if (w > h || w2 > h2)
+		return false;
+
+	if (h >= h2*2 || h2 >= h*2)
+		return false;
+
+	if (h > h2) {
+		tw = w * (float)h2/h;
+		if (w2 >= tw*2 || tw >= w2*2) return false;
+		th = h2;
+		fw = w;
+		fh = h;
+		imlib_context_set_image(fim);
+	} else if (h2 > h) {
+		tw = w2 * (float)h/h2;
+		if (w >= tw*2 || tw >= w*2) return false;
+		th = h;
+		fw = w2;
+		fh = h2;
+		imlib_context_set_image(sim);
+	} else if (w >= w2*2 || w2 >= w*2)
+		return false;
+
+	if (fw != 0 || fh != 0) {
+		if ((tmp = imlib_create_cropped_scaled_image(0, 0, fw, fh, tw, th)) == NULL) {
+			if (old != NULL) imlib_context_set_image(old);
+			return false;
+		}
+		if (fh == h) {
+			fim = tmp;
+			w = tw;
+			h = th;
+		} else {
+			sim = tmp;
+			w2 = tw;
+			h2 = th;
+		}
+	}
+
+	tw = w+w2; th = h;
+	if (tw > th*2) {
+		if (tmp != NULL) {
+			imlib_context_set_image(tmp);
+			imlib_free_image();
+		}
+		if (old != NULL) imlib_context_set_image(old);
+		return false;
+	}
+
+	if ((cim = imlib_create_image(tw, th)) == NULL) {
+		if (tmp != NULL) {
+			imlib_context_set_image(tmp);
+			imlib_free_image();
+		}
+		if (old != NULL) imlib_context_set_image(old);
+		return false;
+	}
+
+	imlib_context_set_image(cim);
+	imlib_blend_image_onto_image(fim, 1, 0, 0, w, h, 0, 0, w, h);
+	imlib_blend_image_onto_image(sim, 1, 0, 0, w2, h2, w, 0, w2, h2);
+
+	if (tmp != NULL) {
+		imlib_context_set_image(tmp);
+		imlib_free_image();
+	}
+
+	if (old != NULL) imlib_context_set_image(old);
+	combined->im = cim;
+	combined->w = tw;
+	combined->h = th;
+	return true;
+}
+

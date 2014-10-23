@@ -29,6 +29,7 @@
 
 #include "exif.h"
 #include "thumbs.h"
+#include "archive.h"
 #include "util.h"
 #include "config.h"
 
@@ -219,12 +220,13 @@ void tns_free(tns_t *tns)
 bool tns_load(tns_t *tns, int n, const fileinfo_t *file,
               bool force, bool silent)
 {
-	int w, h;
+	int w, h, r;
 	bool use_cache, cache_hit = false;
 	float z, zw, zh;
 	thumb_t *t;
 	Imlib_Image *im;
 	const char *fmt;
+	static Imlib_Image (*imlib_load_func)(const char *path) = imlib_load_image;
 
 	if (tns == NULL || tns->thumbs == NULL)
 		return false;
@@ -247,10 +249,14 @@ bool tns_load(tns_t *tns, int n, const fileinfo_t *file,
 	}
 
 	if (!cache_hit) {
-		if (access(file->path, R_OK) < 0 ||
-		    (im = imlib_load_image(file->path)) == NULL)
-		{
-			if (!silent)
+		r = access(file->path, R_OK);
+
+		if (r < 0 && file->archive)
+			return archive_tns_load(tns, n, file, force, silent);
+
+		if (file->archive) imlib_load_func = imlib_load_image_immediately;
+		if (r < 0 || (im = imlib_load_func(file->path)) == NULL) {
+			if (!silent && !archive_is_archive(file->path))
 				warn("could not open image: %s", file->name);
 			return false;
 		}
@@ -260,7 +266,7 @@ bool tns_load(tns_t *tns, int n, const fileinfo_t *file,
 	imlib_context_set_anti_alias(1);
 
 	if ((fmt = imlib_image_format()) == NULL) {
-		if (!silent)
+		if (!silent && !archive_is_archive(file->path))
 			warn("could not open image: %s", file->name);
 		imlib_free_image_and_decache();
 		return false;

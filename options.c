@@ -28,12 +28,15 @@
 #include "util.h"
 #include "config.h"
 
+extern bool dual_mode;
+extern bool manga_mode;
+
 options_t _options;
 const options_t *options = (const options_t*) &_options;
 
 void print_usage(void)
 {
-	printf("usage: sxiv [-bcdFfhioqRrstvZ] [-g GEOMETRY] [-n NUM] "
+	printf("usage: sxiv [-bcDdFfhiMoqRrSstvZ] [-g GEOMETRY] [-n NUM] "
 	       "[-N name] [-z ZOOM] FILES...\n");
 }
 
@@ -65,7 +68,9 @@ void parse_options(int argc, char **argv)
 	_options.thumb_mode = false;
 	_options.clean_cache = false;
 
-	while ((opt = getopt(argc, argv, "bcdFfg:hin:N:oqRrstvZz:")) != -1) {
+	_options.session = NULL;
+
+	while ((opt = getopt(argc, argv, "bcDdFfg:hiMn:N:oqRrS:stvZz:")) != -1) {
 		switch (opt) {
 			case '?':
 				print_usage();
@@ -78,6 +83,9 @@ void parse_options(int argc, char **argv)
 				break;
 			case 'd':
 				_options.scalemode = SCALE_DOWN;
+				break;
+			case 'D':
+				dual_mode = true;
 				break;
 			case 'F':
 				_options.fixed_win = true;
@@ -93,6 +101,9 @@ void parse_options(int argc, char **argv)
 				exit(EXIT_SUCCESS);
 			case 'i':
 				_options.from_stdin = true;
+				break;
+			case 'M':
+				manga_mode = true;
 				break;
 			case 'n':
 				if (sscanf(optarg, "%d", &t) <= 0 || t < 1) {
@@ -117,6 +128,13 @@ void parse_options(int argc, char **argv)
 				break;
 			case 'r':
 				_options.recursive = true;
+				break;
+			case 'S':
+				if (!optarg || !strlen(optarg)) {
+					fprintf(stderr, "sxiv: no session file specified\n");
+					exit(EXIT_FAILURE);
+				}
+				_options.session = optarg;
 				break;
 			case 's':
 				_options.scalemode = SCALE_FIT;

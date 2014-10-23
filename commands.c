@@ -32,6 +32,7 @@
 #include "config.h"
 
 void cleanup(void);
+void refresh_dual_pages(int reset_from);
 void remove_file(int, bool);
 void load_image(int);
 void open_info(void);
@@ -52,6 +53,9 @@ extern int markcnt;
 extern int alternate;
 
 extern int prefix;
+
+extern bool dual_mode;
+extern bool manga_mode;
 
 const int ss_delays[] = {
 	1, 2, 3, 5, 10, 15, 20, 30, 60, 120, 180, 300, 600
@@ -87,6 +91,23 @@ bool it_switch_mode(arg_t a)
 		load_image(tns.sel);
 		mode = MODE_IMAGE;
 	}
+	return true;
+}
+
+bool it_switch_dual_mode(arg_t a)
+{
+	if ((dual_mode = !dual_mode))
+		refresh_dual_pages(-1);
+	if (mode == MODE_IMAGE)
+		load_image(fileidx);
+	return true;
+}
+
+bool it_switch_manga_mode(arg_t a)
+{
+	manga_mode = !manga_mode;
+	if (mode == MODE_IMAGE && dual_mode)
+		load_image(fileidx);
 	return true;
 }
 
@@ -166,7 +187,14 @@ bool i_navigate(arg_t a)
 	if (mode == MODE_IMAGE) {
 		if (prefix > 0)
 			n *= prefix;
-		n += fileidx;
+
+		if (dual_mode && files[fileidx].linked != -1 &&
+			((n > 0 && files[fileidx].linked > fileidx) ||
+			 (n < 0 && files[fileidx].linked < fileidx))) {
+			n += files[fileidx].linked;
+		} else
+			n += fileidx;
+
 		if (n < 0)
 			n = 0;
 		if (n >= filecnt)
@@ -174,6 +202,40 @@ bool i_navigate(arg_t a)
 
 		if (n != fileidx) {
 			load_image(n);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool i_navigate_archive(arg_t a)
+{
+	int i, cidx, ar;
+	long n = (long) a;
+
+	if (n == 0)
+		return false;
+
+	if (mode == MODE_IMAGE) {
+		if (prefix > 0)
+			n *= prefix;
+
+		if (n > 0) {
+			for (cidx = fileidx, i = fileidx+1, ar = 0; ar < n && i < filecnt; ++ar, cidx = i)
+				for (; i < filecnt && !s_strcmp(files[cidx].archive, files[i].archive); ++i);
+		} else {
+			for (cidx = fileidx, i = fileidx-1, ar = 0; ar > n && i >= 0; --ar, cidx = i)
+				for (; i >= 0 && !s_strcmp(files[cidx].archive, files[i].archive); --i);
+			for (; i - 1 >= 0 && !s_strcmp(files[i].archive, files[i-1].archive); --i);
+		}
+
+		if (i < 0)
+			i = 0;
+		if (i >= filecnt)
+			i = filecnt - 1;
+
+		if (i != fileidx) {
+			load_image(i);
 			return true;
 		}
 	}
@@ -310,6 +372,35 @@ bool i_scroll_to_edge(arg_t a)
 		return img_pan_edge(&img, dir);
 	else
 		return false;
+}
+
+bool i_scroll_to_edge_seq(arg_t a)
+{
+	if (mode == MODE_IMAGE) {
+		switch (img.edgedir) {
+			case 1:
+				img.edgedir++;
+				img_pan_edge(&img, DIR_DOWN);
+				break;
+			case 2:
+				img.edgedir++;
+				img_pan_edge(&img, DIR_UP);
+				img_pan_edge(&img, DIR_LEFT);
+				break;
+			case 3:
+				img.edgedir++;
+				img_pan_edge(&img, DIR_DOWN);
+				break;
+			case 4:
+				img.edgedir = 1;
+				img_pan_edge(&img, DIR_UP);
+				img_pan_edge(&img, DIR_RIGHT);
+				break;
+		}
+		return true;
+	} else {
+		return false;
+	}
 }
 
 /* Xlib helper function for i_drag() */

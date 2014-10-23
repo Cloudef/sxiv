@@ -31,10 +31,12 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <X11/keysym.h>
+#include <zlib.h>
 
 #include "types.h"
 #include "commands.h"
 #include "image.h"
+#include "archive.h"
 #include "options.h"
 #include "thumbs.h"
 #include "util.h"
@@ -57,6 +59,7 @@ void redraw(void);
 void reset_cursor(void);
 void animate(void);
 void clear_resize(void);
+void load_image(int);
 
 appmode_t mode;
 img_t img;
@@ -67,7 +70,8 @@ win_t win;
 r_dir_t *dirr = NULL;
 
 fileinfo_t *files;
-int memfilecnt, filecnt, fileidx;
+int memfilecnt, filecnt, fileidx, startidx = 0;
+int filearchivecnt = 0;
 int markcnt;
 int alternate;
 
@@ -75,6 +79,10 @@ int prefix;
 
 bool resized = false;
 
+bool dual_mode = false;
+bool manga_mode = false;
+
+const char * const ACHV_EXTRCT = "/tmp/sxiv-unarchive";
 const char * const INFO_SCRIPT = ".sxiv/exec/image-info";
 struct {
   char *script;
@@ -90,9 +98,132 @@ timeout_t timeouts[] = {
 	{ { 0, 0 }, false, clear_resize },
 };
 
+bool session_store(const char *file)
+{
+    int i;
+	FILE *f;
+
+	f = fopen(file, "w");
+	if (f == NULL) {
+		warn("failed to open session file: %s\n", file);
+		return false;
+	}
+
+	fprintf(f, "sxiv-session 1.0\n");
+	fprintf(f, "%d\n", filecnt);
+	fprintf(f, "%d\n", fileidx);
+	fprintf(f, "%d\n", dual_mode);
+	fprintf(f, "%d\n", manga_mode);
+	for (i = 0; i < filecnt; ++i) {
+		fprintf(f, "%s\n", (files[i].archive?files[i].archive:""));
+		fprintf(f, "%s\n", (files[i].name?files[i].name:""));
+		fprintf(f, "%s\n", (files[i].path?files[i].path:""));
+		fprintf(f, "%d\n", files[i].linked);
+		fprintf(f, "%d\n", files[i].single_page);
+		fprintf(f, "%d\n", files[i].marked);
+	}
+
+	fclose(f);
+	return true;
+}
+
+bool session_restore(const char *file)
+{
+    FILE *f;
+	int i, fcnt;
+	size_t len, n;
+	char *line = NULL;
+	char *version = NULL;
+	const char *bn;
+
+	f = fopen(file, "r");
+	if (f == NULL) {
+		if (filecnt == 0)
+			warn("failed to open session file: %s\n", file);
+		return false;
+	}
+
+	len = get_line(&line, &n, f); line[len-1] = '\0';
+	if (strncmp(line, "sxiv-session ", strlen("sxiv-session "))) {
+		fclose(f);
+		warn("session file in wrong format\n");
+		return false;
+	}
+
+	if ((version = s_strdup(line+strlen("sxiv-session "))) == NULL) {
+		fclose(f);
+		warn("failed to retieve version from session file");
+		return false;
+	}
+
+	len = get_line(&line, &n, f); line[len-1] = '\0';
+	if ((fcnt = strtol(line, NULL, 10)) <= 0) {
+		free(version);
+		fclose(f);
+		if (filecnt == 0)
+			warn("no files in session file\n");
+		return false;
+	}
+
+	filecnt += fcnt;
+	files = (fileinfo_t*) s_malloc(filecnt * sizeof(fileinfo_t));
+	memfilecnt = filecnt;
+	fileidx = fcnt;
+
+	len = get_line(&line, &n, f); line[len-1] = '\0';
+	startidx = strtol(line, NULL, 10);
+
+    if (startidx >= fcnt)
+		startidx = fcnt - 1;
+	else if (startidx < 0)
+		startidx = 0;
+
+	len = get_line(&line, &n, f); line[len-1] = '\0';
+	dual_mode = strtol(line, NULL, 10);
+
+	len = get_line(&line, &n, f); line[len-1] = '\0';
+	manga_mode = strtol(line, NULL, 10);
+
+	for (i = 0; i != fcnt; ++i) {
+		files[i].loaded = false;
+		files[i].name = files[i].path = files[i].archive = NULL;
+
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		if (line[0] != '\0') files[i].archive = s_strdup(line);
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		if (line[0] != '\0') files[i].name = s_strdup(line);
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		if (line[0] != '\0') files[i].path = s_strdup(line);
+
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		files[i].linked = strtol(line, NULL, 10);
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		files[i].single_page = strtol(line, NULL, 10);
+		len = get_line(&line, &n, f); line[len-1] = '\0';
+		files[i].marked = strtol(line, NULL, 10);
+
+		if (files[i].archive && (bn = strrchr(files[i].archive , '/')) != NULL && bn[1] != '\0')
+			files[i].archivebase = ++bn;
+		else
+			files[i].archivebase = files[i].archive;
+		if ((bn = strrchr(files[i].name , '/')) != NULL && bn[1] != '\0')
+			files[i].base = ++bn;
+		else
+			files[i].base = files[i].name;
+	}
+
+	fclose(f);
+	free(version);
+	free(line);
+	return (filecnt > 0);
+}
+
 void cleanup(void)
 {
 	static bool in = false;
+
+    if (ACHV_EXTRCT)
+		rmdir(ACHV_EXTRCT);
 
 	if (dirr)
 		r_closedir(dirr);
@@ -105,34 +236,98 @@ void cleanup(void)
 	}
 }
 
-void check_add_file(char *filename)
+void refresh_archive_count(void)
 {
-	const char *bn;
+	int i;
+
+	for (i = 0, filearchivecnt = 0; i < filecnt; ++i) {
+		if (i + 1 < filecnt && files[i].archive && !s_strcmp(files[i].archive, files[i+1].archive)) continue;
+		++filearchivecnt;
+	}
+}
+
+void refresh_dual_pages(int reset_from)
+{
+	int i;
+
+	for (i = reset_from; i >= 0 && i < filecnt; ++i)
+		files[i].linked = -1;
+
+	for (i = 0; dual_mode && i < filecnt; ++i) {
+		if (i + 1 >= filecnt) continue;
+		if (files[i].single_page) continue;
+		if (files[i].linked != -1) continue;
+		if (s_strcmp(files[i].archive, files[i+1].archive)) continue;
+		files[i].linked = i+1;
+		files[i+1].linked = i;
+	}
+}
+
+void check_add_file(char *filename, char *archive)
+{
+	int i;
+	char *pathcpy, *bn;
+	static const char *achv_ext[] = { ".zip", ".rar", ".7z", ".tar", ".tar.gz", "tar.xz", ".tgz", NULL };
 
 	if (filename == NULL || *filename == '\0')
 		return;
 
-	if (access(filename, R_OK) < 0) {
+	if (archive == NULL && access(filename, R_OK) < 0) {
 		warn("could not open file: %s", filename);
 		return;
+	}
+
+	if (archive != NULL) {
+		if (memfilecnt < ++filecnt) {
+			while (memfilecnt < filecnt) memfilecnt *= 2;
+			files = (fileinfo_t*) s_realloc(files, memfilecnt * sizeof(fileinfo_t));
+		}
+		for (i = filecnt-1; i > fileidx; --i)
+			memcpy(&files[i], &files[i-1], sizeof(fileinfo_t));
 	}
 
 	if (fileidx == memfilecnt) {
 		memfilecnt *= 2;
 		files = (fileinfo_t*) s_realloc(files, memfilecnt * sizeof(fileinfo_t));
 	}
-	if (*filename != '/') {
+	if (*filename != '/' && archive == NULL) {
 		files[fileidx].path = absolute_path(filename);
 		if (files[fileidx].path == NULL) {
 			warn("could not get absolute path of file: %s\n", filename);
 			return;
 		}
+	} else if (archive != NULL) {
+		files[fileidx].path = path_append(ACHV_EXTRCT, filename);
 	}
+
+	files[fileidx].linked = -1;
+	files[fileidx].single_page = false;
 	files[fileidx].loaded = false;
 	files[fileidx].marked = false;
 	files[fileidx].name = s_strdup(filename);
-	if (*filename == '/')
+
+	if (*filename == '/' && archive == NULL)
 		files[fileidx].path = files[fileidx].name;
+
+    for (i = 0; !archive && achv_ext[i]; ++i) {
+		if (s_strucmp(files[fileidx].path+strlen(files[fileidx].path)-strlen(achv_ext[i]), achv_ext[i])) continue;
+		archive = (char*)files[fileidx].path;
+	}
+
+	if (archive) {
+		files[fileidx].archive = s_strdup(archive);
+	} else {
+		pathcpy = s_strdup((char*)files[fileidx].path);
+		if ((bn = strrchr(pathcpy, '/')) != NULL && bn[1] != '\0')
+			*bn = '\0';
+		files[fileidx].archive = s_strdup(pathcpy);
+		free(pathcpy);
+	}
+
+	if (archive && (bn = strrchr(files[fileidx].archive , '/')) != NULL && bn[1] != '\0')
+		files[fileidx].archivebase = ++bn;
+	else
+		files[fileidx].archivebase = files[fileidx].archive;
 	if ((bn = strrchr(files[fileidx].name , '/')) != NULL && bn[1] != '\0')
 		files[fileidx].base = ++bn;
 	else
@@ -142,8 +337,17 @@ void check_add_file(char *filename)
 
 void remove_file(int n, bool manual)
 {
+	int ofileidx = fileidx, linked = -1;
+
 	if (n < 0 || n >= filecnt)
 		return;
+
+	if (!manual) {
+		fileidx = n+1;
+		archive_check_add_file(files[n].path, check_add_file);
+		if (fileidx > filecnt) filecnt = fileidx;
+		fileidx = ofileidx;
+	}
 
 	if (filecnt == 1) {
 		if (!manual)
@@ -152,8 +356,16 @@ void remove_file(int n, bool manual)
 		exit(manual ? EXIT_SUCCESS : EXIT_FAILURE);
 	}
 
+	if (files[n].linked != -1) {
+		linked = files[n].linked;
+		if (linked > n) --linked;
+		files[n].linked = -1;
+	}
+
 	if (files[n].path != files[n].name)
 		free((void*) files[n].path);
+	if (files[n].archive)
+		free((void*) files[n].archive);
 	free((void*) files[n].name);
 
 	if (n + 1 < filecnt)
@@ -167,6 +379,14 @@ void remove_file(int n, bool manual)
 	filecnt--;
 	if (n < tns.cnt)
 		tns.cnt--;
+
+	refresh_dual_pages(n);
+	refresh_archive_count();
+
+	if (dual_mode && linked != -1) {
+		files[linked].linked = -1;
+		remove_file(linked, manual);
+	}
 }
 
 void set_timeout(timeout_f handler, int time, bool overwrite)
@@ -236,6 +456,9 @@ void open_info(void)
 	}
 	win.bar.l[0] = '\0';
 
+	warn("info script not supported on manga branch yet.");
+	return;
+
 	if (pipe(pfd) < 0)
 		return;
 	pid = fork();
@@ -289,6 +512,9 @@ end:
 
 void load_image(int new)
 {
+	int linked;
+    img_t combined, second;
+
 	if (new < 0 || new >= filecnt)
 		return;
 
@@ -299,6 +525,22 @@ void load_image(int new)
 		remove_file(new, false);
 		if (new >= filecnt)
 			new = filecnt - 1;
+	}
+
+	linked = files[new].linked;
+	if (dual_mode && linked != -1) {
+		img_init(&second, &win);
+		memcpy(&combined, &img, sizeof(img_t));
+		if (img_load(&second, &files[linked]) &&
+			img_join(&combined, &img, &second, ((manga_mode && linked > new) || (!manga_mode && linked < new)))) {
+			img_close(&img, false);
+			memcpy(&img, &combined, sizeof(img_t));
+		} else {
+			refresh_dual_pages((linked > new ? linked : new));
+			files[new].linked = -1;
+			files[new].single_page = true;
+		}
+		img_close(&second, false);
 	}
 
 	files[new].loaded = true;
@@ -312,35 +554,88 @@ void load_image(int new)
 		set_timeout(animate, img.multi.frames[img.multi.sel].delay, true);
 	else
 		reset_timeout(animate);
+
+	if (options->session)
+		session_store(options->session);
 }
 
 void update_info(void)
 {
-	int sel;
-	unsigned int i, fn, fw, n;
+	int sel, pages = 0, page = 1, page2 = -1, fnum, fnum2 = -1, pw = 0, i, fn, fw, n = 0;
 	unsigned int llen = sizeof(win.bar.l), rlen = sizeof(win.bar.r);
 	char *lt = win.bar.l, *rt = win.bar.r, title[TITLE_LEN];
-	const char * mark;
+	const char * mark, *file, *fileb;
 	bool ow_info;
+	DIR *dir = NULL;
 
-	for (fw = 0, i = filecnt; i > 0; fw++, i /= 10);
+	for (fw = 0, i = filearchivecnt; i > 0; fw++, i /= 10);
 	sel = mode == MODE_IMAGE ? fileidx : tns.sel;
+
+	if (!files[sel].archive || (dir = opendir(files[sel].archive))) {
+		file = files[sel].name;
+		fileb = files[sel].base;
+		if (dir) closedir(dir);
+	} else {
+		file = files[sel].archive;
+		fileb = files[sel].archivebase;
+	}
+	if (!fileb) fileb = file;
+
+	/* count pages of archive */
+	if (files[sel].archive != NULL) {
+		for (i = sel-1; i >= 0 && !s_strcmp(files[sel].archive, files[i].archive); --i);
+		for (++i; i < filecnt && !s_strcmp(files[sel].archive, files[i].archive); ++pages, ++i)
+			if (i == sel) page = pages;
+		for (pw = 0, i = pages; i > 0; pw++, i /= 10);
+
+		/* figure out dual page numbers */
+		if (dual_mode) {
+			if (files[sel].linked != -1 && files[sel].linked > sel) page2 = page + 1;
+			if (files[sel].linked != -1 && files[sel].linked < sel) page2 = page, --page;
+		}
+	}
+
+	/* count the pseudo file number (archives are considered single file) */
+	for (i = 0, fnum = 0; i < sel; ++i) {
+		if (i + 1 < filecnt && files[i].archive && !s_strcmp(files[i].archive, files[i+1].archive)) continue;
+		++fnum;
+	}
+
+	/* figure out dual file numbers */
+	if (dual_mode && files[sel].archive == NULL) {
+		if (files[sel].linked != -1 && files[sel].linked > sel) fnum2 = fnum + 1;
+		if (files[sel].linked != -1 && files[sel].linked < sel) fnum2 = fnum, --fnum;
+	}
 
 	/* update window title */
 	if (mode == MODE_THUMB) {
 		win_set_title(&win, "sxiv");
 	} else {
-		snprintf(title, sizeof(title), "sxiv - %s", files[sel].name);
+		snprintf(title, sizeof(title), "sxiv - %s", file);
 		win_set_title(&win, title);
 	}
 
 	/* update bar contents */
 	if (win.bar.h == 0)
 		return;
+
+	if (dual_mode || manga_mode)
+		n += snprintf(rt + n, rlen - n, "%s%s| ", dual_mode ? "D " : "", manga_mode ? "M " : "");
+
 	mark = files[sel].marked ? "* " : "";
 	if (mode == MODE_THUMB) {
 		if (tns.cnt == filecnt) {
-			n = snprintf(rt, rlen, "%s%0*d/%d", mark, fw, sel + 1, filecnt);
+			if (pages > 0) {
+				if (page2 != -1)
+					n += snprintf(rt + n, rlen - n, "%0*d,%0*d/%d | ", pw, page + 1, pw, page2 + 1, pages);
+				else
+					n += snprintf(rt + n, rlen - n, "%0*d/%d | ", pw, page + 1, pages);
+			}
+
+			if (fnum2 != -1)
+				n += snprintf(rt + n, rlen - n, "%s%0*d,%0*d/%d", mark, fw, fnum + 1, fw, fnum + 2, filearchivecnt);
+			else
+				n += snprintf(rt + n, rlen - n, "%s%0*d/%d", mark, fw, fnum + 1, filearchivecnt);
 			ow_info = true;
 		} else {
 			snprintf(lt, llen, "Loading... %0*d/%d", fw, tns.cnt, filecnt);
@@ -348,24 +643,35 @@ void update_info(void)
 			ow_info = false;
 		}
 	} else {
-		n = snprintf(rt, rlen, "%s%3d%% | ", mark, (int) (img.zoom * 100.0));
+		n += snprintf(rt + n, rlen - n, "%s%3d%% | ", mark, (int) (img.zoom * 100.0));
 		if (img.multi.cnt > 0) {
 			for (fn = 0, i = img.multi.cnt; i > 0; fn++, i /= 10);
 			n += snprintf(rt + n, rlen - n, "%0*d/%d | ",
 			              fn, img.multi.sel + 1, img.multi.cnt);
 		}
-		n += snprintf(rt + n, rlen - n, "%0*d/%d", fw, sel + 1, filecnt);
+
+		if (pages > 1) {
+			if (page2 != -1)
+				n += snprintf(rt + n, rlen - n, "%0*d,%0*d/%d | ", pw, page + 1, pw, page2 + 1, pages);
+			else
+				n += snprintf(rt + n, rlen - n, "%0*d/%d | ", pw, page + 1, pages);
+		}
+
+		if (fnum2 != -1)
+			n += snprintf(rt + n, rlen - n, "%0*d,%0*d/%d", fw, fnum + 1, fw, fnum + 2, filearchivecnt);
+		else
+			n += snprintf(rt + n, rlen - n, "%0*d/%d", fw, fnum + 1, filearchivecnt);
 		ow_info = info.script == NULL;
 	}
-	if (ow_info && files[sel].name) {
-		fn = strlen(files[sel].name);
+	if (ow_info && file) {
+		fn = strlen(file);
 		if (fn < llen &&
-		    win_textwidth(files[sel].name, fn, true) +
+		    win_textwidth(file, fn, true) +
 		    win_textwidth(rt, n, true) < win.w)
 		{
-			strncpy(lt, files[sel].name, llen);
+			strncpy(lt, file, llen);
 		} else {
-			strncpy(lt, files[sel].base, llen);
+			strncpy(lt, fileb, llen);
 		}
 	}
 }
@@ -542,10 +848,12 @@ void run(void)
 			if ((filename = r_readdir(dirr)) != NULL) {
 				ofileidx = fileidx;
 				fileidx = filecnt;
-				if (img_test(filename))
-					check_add_file(filename);
-				free((void*) filename);
+				if (archive_is_archive(filename) || img_test(filename))
+					check_add_file(filename, NULL);
+				  free((void*) filename);
 				filecnt = fileidx;
+				refresh_dual_pages(fileidx);
+				refresh_archive_count();
 				fileidx = ofileidx;
 				if (mode == MODE_THUMB && filecnt > tns.cap) {
 					tns.thumbs = (thumb_t*) s_realloc(tns.thumbs, filecnt*2 * sizeof(thumb_t));
@@ -647,6 +955,7 @@ int main(int argc, char **argv)
 	const char *homedir;
 	struct stat fstats;
 	r_dir_t dir;
+	bool restored = false;
 
 	parse_options(argc, argv);
 
@@ -656,7 +965,7 @@ int main(int argc, char **argv)
 		exit(EXIT_SUCCESS);
 	}
 
-	if (options->filecnt == 0 && !options->from_stdin) {
+	if (options->filecnt == 0 && !options->from_stdin && !options->session) {
 		print_usage();
 		exit(EXIT_FAILURE);
 	}
@@ -666,16 +975,23 @@ int main(int argc, char **argv)
 	else
 		filecnt = options->filecnt;
 
-	files = (fileinfo_t*) s_malloc(filecnt * sizeof(fileinfo_t));
-	memfilecnt = filecnt;
-	fileidx = 0;
+	if (options->session) {
+		if (!(restored = session_restore(options->session)) && filecnt == 0)
+			exit(EXIT_FAILURE);
+	}
+
+	if (!restored) {
+		files = (fileinfo_t*) s_malloc(filecnt * sizeof(fileinfo_t));
+		memfilecnt = filecnt;
+		fileidx = 0;
+	}
 
 	if (options->from_stdin) {
 		filename = NULL;
 		while ((len = get_line(&filename, &n, stdin)) > 0) {
 			if (filename[len-1] == '\n')
 				filename[len-1] = '\0';
-			check_add_file(filename);
+			check_add_file(filename, NULL);
 		}
 		if (filename != NULL)
 			free(filename);
@@ -689,7 +1005,7 @@ int main(int argc, char **argv)
 			continue;
 		}
 		if (!S_ISDIR(fstats.st_mode)) {
-			check_add_file(filename);
+			check_add_file(filename, NULL);
 		} else {
 			if (!options->recursive && !options->recursive_fast) {
 				warn("ignoring directory: %s", filename);
@@ -704,20 +1020,19 @@ int main(int argc, char **argv)
 			if (options->recursive_fast) {
 				dirr = &dir;
 				while ((filename = r_readdir(&dir)) != NULL) {
-					if (img_test(filename)) {
-						check_add_file(filename);
-						free((void*) filename);
-						break;
-					}
+					if (archive_is_archive(filename) || img_test(filename))
+						check_add_file(filename, NULL);
 					free((void*) filename);
+					if ((!dual_mode && fileidx > 0) || fileidx > 1)
+						break;
 				}
-				if (!filename) {
+				if (filename == NULL) {
 					r_closedir(&dir);
 					dirr = NULL;
 				}
 			} else {
 				while ((filename = r_readdir(&dir)) != NULL) {
-					check_add_file(filename);
+					check_add_file(filename, NULL);
 					free((void*) filename);
 				}
 				r_closedir(&dir);
@@ -727,13 +1042,16 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (fileidx == 0) {
+	if (fileidx == 0 && !options->session) {
 		fprintf(stderr, "sxiv: no valid image file given, aborting\n");
 		exit(EXIT_FAILURE);
 	}
 
 	filecnt = fileidx;
 	fileidx = options->startnum < filecnt ? options->startnum : 0;
+	if (startidx != 0 && startidx != options->startnum) fileidx = startidx;
+	refresh_dual_pages(-1);
+	refresh_archive_count();
 
 	win_init(&win);
 	img_init(&img, &win);

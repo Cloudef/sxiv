@@ -65,9 +65,13 @@ typedef enum {
 } cursor_t;
 
 typedef struct {
+	const char *archive; /* is this archive? */
 	const char *name; /* as given by user */
 	const char *path; /* always absolute */
+	const char *archivebase;
 	const char *base;
+	int linked;
+	bool single_page;
 	bool loaded;
 	bool marked;
 } fileinfo_t;

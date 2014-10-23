@@ -34,6 +34,9 @@ Do not show info bar on bottom of window.
 .B \-c
 Remove all orphaned cache files from the thumbnail cache directory and exit.
 .TP
+.BI "\-D"
+Start in dual page mode
+.TP
 .B \-d
 Scale all images to 100%, but fit large images into window.
 .TP
@@ -48,6 +51,9 @@ Start in fullscreen mode.
 Set window position and size. See section GEOMETRY SPECIFICATIONS of X(7) for
 more information on
 .IR GEOMETRY .
+.TP
+.BI "\-M"
+Start in manga mode, reverses the pages in dual page mode
 .TP
 .BI "\-n " NUM
 Start at picture number NUM.
@@ -76,6 +82,9 @@ This mode reads the images in order as the OS gives them, so there is no sorting
 .TP
 .B \-r
 Search the given directories recursively for images to view.
+.TP
+.BI "\-S " SESSION
+Use session file to store/restore session.
 .TP
 .B \-s
 Scale all images to fit into window.
@@ -128,11 +137,20 @@ Reload image.
 .B R
 Reload all thumbnails.
 .TP
+.B d
+Toggle dual page mode.
+.TP
 .B D
 Remove current image from file list and go to next image.
 .TP
+.B M
+Pan in manga way (topright, bottomright, topleft, bottomleft).
+.TP
 .B m
 Mark/unmark the current image.
+.TP
+.B Ctrl-m
+Toggle manga mode.
 .TP
 .B N
 Go
@@ -194,6 +212,16 @@ Go
 Go
 .I count
 * 10 images forward.
+.TP
+.B Home
+Go
+.I count
+archives backward.
+.TP
+.B End
+Go
+.I count
+archives forward.
 .SS Handle multi-frame images
 .TP
 .B Ctrl-n

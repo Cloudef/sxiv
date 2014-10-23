@@ -20,10 +20,12 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include "options.h"
 #include "util.h"
@@ -65,6 +67,24 @@ char* s_strdup(char *s)
 		strcpy(d, s);
 	}
 	return d;
+}
+
+int s_strcmp(const char *s1, const char *s2)
+{
+	if (s1 == s2) return 0;
+	if (s1 == NULL || s2 == NULL) return 1;
+	return strcmp(s1, s2);
+}
+
+int s_strucmp(const char *s1, const char *s2)
+{
+	size_t i, len;
+	if (s1 == s2) return 0;
+	if (s1 == NULL || s2 == NULL) return 1;
+	if ((len = strlen(s1)) != strlen(s2)) return 1;
+	for (i = 0; i < len; ++i)
+		if (toupper(s1[i]) != toupper(s2[i])) return 1;
+	return 0;
 }
 
 void warn(const char* fmt, ...)
@@ -139,6 +159,19 @@ void size_readable(float *size, const char **unit)
 	for (i = 0; i < ARRLEN(units) && *size > 1024.0; i++)
 		*size /= 1024.0;
 	*unit = units[MIN(i, ARRLEN(units) - 1)];
+}
+
+char* path_append(const char *base, const char *path)
+{
+	size_t len;
+	char *full;
+
+	len = snprintf(NULL, 0, "%s/%s", base, path)+1;
+	if ((full = s_malloc(len)) == NULL)
+		return NULL;
+
+	sprintf(full, "%s/%s", base, path);
+	return full;
 }
 
 char* absolute_path(const char *filename)
